@@ -24,6 +24,7 @@ const productSchema = new mongoose.Schema(
     name: { type: String, required: true },
     brand: { type: String, required: true },
     image: { type: String, required: true },
+    gallery: { type: [String], default: [] },
     price: { type: Number, required: true, min: 0 }, // USD — the store's base currency
     compareAtPrice: { type: Number, min: 0 },
     unitStock: { type: Number, required: true, min: 0, default: 0 },

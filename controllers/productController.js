@@ -36,6 +36,13 @@ function validateProductPayload(body, { partial = false } = {}) {
     if (!body.image || typeof body.image !== 'string') errors.push('image URL is required');
     else data.image = body.image.trim();
   }
+  if (body.gallery !== undefined) {
+    if (Array.isArray(body.gallery)) {
+      data.gallery = body.gallery.map((g) => String(g).trim()).filter(Boolean);
+    } else {
+      errors.push('gallery must be an array of image URLs');
+    }
+  }
   if (!partial || body.price !== undefined) {
     const price = Number(body.price);
     if (!Number.isFinite(price) || price < 0) errors.push('price must be a non-negative number');
