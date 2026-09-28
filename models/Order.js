@@ -37,17 +37,30 @@ const orderSchema = new mongoose.Schema(
       enum: ['pending', 'processing', 'shipped', 'delivered', 'cancelled'],
       default: 'pending',
     },
+    // 'pending'  — stock is reserved, waiting on the customer to finish paying on Paystack
+    // 'paid'     — payment confirmed, this is a real order
+    // 'failed'   — Paystack reported the payment failed (or it never got that far); stock released
+    // 'expired'  — the customer never came back to finish checkout; stock released
+    // 'unpaid'   — manual/admin-entered order that was never meant to go through Paystack
     paymentStatus: {
       type: String,
-      enum: ['unpaid', 'paid', 'failed'],
+      enum: ['unpaid', 'pending', 'paid', 'failed', 'expired'],
       default: 'unpaid',
     },
     paymentProvider: { type: String, default: undefined },
     paymentReference: { type: String, unique: true, sparse: true },
+    // Bookkeeping for what actually happened at checkout, since the
+    // USD→NGN rate can drift between orders — keeps each order's real
+    // history accurate even if today's live rate is different.
     exchangeRateUsed: { type: Number },
     amountPaidNgn: { type: Number },
+    // Only meaningful while paymentStatus is 'pending' — once this passes,
+    // the reservation is released back to stock (see paymentController).
+    reservationExpiresAt: { type: Date },
   },
   { timestamps: true }
 );
+
+orderSchema.index({ paymentStatus: 1, reservationExpiresAt: 1 });
 
 module.exports = mongoose.model('Order', orderSchema);

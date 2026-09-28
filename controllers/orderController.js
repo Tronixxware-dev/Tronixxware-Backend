@@ -18,6 +18,15 @@ function computeUnitPrice(product, quantity) {
   return product.price;
 }
 
+// Shared core: validates items/stock, computes pricing server-side (never
+// trusts client-sent prices), decrements stock, and creates the Order — all
+// inside one MongoDB transaction so a failure anywhere rolls everything back
+// and stock can never be oversold. Used for admin-created manual orders
+// (e.g. a phone or in-person sale). The Paystack checkout flow no longer
+// goes through this function — it reserves stock and creates its own
+// 'pending' Order up front in paymentController, so a paid-but-orderless
+// gap can't happen; see reserveStockAndCreatePendingOrder / confirmPayment
+// there.
 async function buildAndSaveOrder({
   items,
   customer,
@@ -131,6 +140,8 @@ async function buildAndSaveOrder({
   return savedOrder;
 }
 
+// POST /api/orders — admin-only. For manual orders (e.g. a phone or
+// in-person sale) that didn't go through the Paystack checkout flow.
 exports.createOrder = async (req, res, next) => {
   try {
     const { items, customer, shippingAddress, notes, paymentStatus } = req.body;
@@ -182,3 +193,4 @@ exports.updateOrderStatus = async (req, res, next) => {
 };
 
 exports.buildAndSaveOrder = buildAndSaveOrder;
+exports.computeUnitPrice = computeUnitPrice;

@@ -1,11 +1,11 @@
 const jwt = require('jsonwebtoken');
 
-function requireAdmin(req, res, next) {
-  const authHeader = req.headers.authorization || '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+module.exports = function requireAdmin(req, res, next) {
+  const header = req.headers.authorization || '';
+  const [scheme, token] = header.split(' ');
 
-  if (!token) {
-    return res.status(401).json({ error: 'Admin authentication required' });
+  if (scheme !== 'Bearer' || !token) {
+    return res.status(401).json({ error: 'Missing or malformed admin token' });
   }
 
   try {
@@ -13,11 +13,9 @@ function requireAdmin(req, res, next) {
     if (payload.role !== 'admin') {
       return res.status(403).json({ error: 'Not authorized' });
     }
-    req.admin = true;
+    req.admin = payload;
     next();
   } catch (err) {
-    return res.status(401).json({ error: 'Invalid or expired session' });
+    return res.status(401).json({ error: 'Invalid or expired admin token' });
   }
-}
-
-module.exports = requireAdmin;
+};
