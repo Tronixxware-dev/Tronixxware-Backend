@@ -10,29 +10,30 @@ const colorSchema = new mongoose.Schema(
 
 const bulkSchema = new mongoose.Schema(
   {
-    minQty: { type: Number, required: true },
-    pricePerUnit: { type: Number, required: true },
+    minQty: { type: Number, required: true, min: 2 },
+    pricePerUnit: { type: Number, required: true, min: 0 },
   },
   { _id: false }
 );
 
 const productSchema = new mongoose.Schema(
   {
+    // A short, URL-friendly identifier — this is what carts, orders and the
+    // product detail page (/products/:id) key off of, NOT Mongo's _id.
     id: { type: String, required: true, unique: true },
-    category: { type: String, required: true },
-    brand: { type: String, required: true },
     name: { type: String, required: true },
-    specs: { type: [String], default: [] },
-    condition: { type: String, required: true },
-    description: { type: String, default: '' },
+    brand: { type: String, required: true },
     image: { type: String, required: true },
-    colors: { type: [colorSchema], default: [] },
-    price: { type: Number, required: true },
-    compareAtPrice: { type: Number, default: null },
-    rating: { type: Number, default: 0 },
-    reviews: { type: Number, default: 0 },
-    unitStock: { type: Number, required: true, default: 0 },
-    bulk: { type: bulkSchema, default: null },
+    price: { type: Number, required: true, min: 0 }, // USD — the store's base currency
+    compareAtPrice: { type: Number, min: 0 },
+    unitStock: { type: Number, required: true, min: 0, default: 0 },
+    colors: { type: [colorSchema], default: undefined },
+    bulk: { type: bulkSchema, default: undefined },
+    rating: { type: Number, min: 0, max: 5, default: 0 },
+    reviews: { type: Number, min: 0, default: 0 },
+    specs: { type: [String], default: [] },
+    condition: { type: String, default: 'New' },
+    description: { type: String },
   },
   { timestamps: true }
 );
