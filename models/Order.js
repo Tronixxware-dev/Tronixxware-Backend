@@ -17,6 +17,9 @@ const orderItemSchema = new mongoose.Schema(
 const orderSchema = new mongoose.Schema(
   {
     orderNumber: { type: String, required: true, unique: true },
+    // Set when the customer was logged in at checkout. Left unset for
+    // guest checkouts — those orders just live on paymentReference/email.
+    customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
     items: { type: [orderItemSchema], required: true },
     subtotal: { type: Number, required: true }, // in USD — the store's base currency
     customer: {
@@ -57,10 +60,17 @@ const orderSchema = new mongoose.Schema(
     // Only meaningful while paymentStatus is 'pending' — once this passes,
     // the reservation is released back to stock (see paymentController).
     reservationExpiresAt: { type: Date },
+    // Set true when a payment was confirmed late (after the reservation
+    // already expired and stock was released/possibly resold) and we
+    // couldn't fully re-reserve it. The order is still marked 'paid' —
+    // the customer's money is real — but this needs a human to check
+    // stock/fulfillment for it.
+    stockConflict: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
 
 orderSchema.index({ paymentStatus: 1, reservationExpiresAt: 1 });
+orderSchema.index({ customerId: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Order', orderSchema);

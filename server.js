@@ -7,6 +7,8 @@ const orderRoutes = require('./routes/orderRoutes');
 const adminAuthRoutes = require('./routes/adminAuthRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const exchangeRateRoutes = require('./routes/exchangeRateRoutes');
+const customerAuthRoutes = require('./routes/customerAuthRoutes');
+const customerOrderRoutes = require('./routes/customerOrderRoutes');
 const { releaseExpiredReservations } = require('./controllers/paymentController');
 
 const REQUIRED_ENV_VARS = ['JWT_SECRET', 'ADMIN_EMAIL', 'ADMIN_PASSWORD', 'PAYSTACK_SECRET_KEY'];
@@ -49,6 +51,8 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/admin', adminAuthRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/exchange-rate', exchangeRateRoutes);
+app.use('/api/customers', customerAuthRoutes);
+app.use('/api/my-orders', customerOrderRoutes);
 
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 

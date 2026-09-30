@@ -1,5 +1,6 @@
 const axios = require('axios');
 const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const Product = require('../models/Product');
@@ -7,7 +8,10 @@ const { computeUnitPrice } = require('./orderController');
 const { getUsdToNgnRate } = require('../services/exchangeRate');
 
 const PAYSTACK_BASE_URL = 'https://api.paystack.co';
-const RESERVATION_TTL_MS = 20 * 60 * 1000; // hold stock for 20 minutes while the customer is on Paystack's page
+// Bumped from 20 to 45 minutes — a real buffer for slower payment methods
+// (bank transfer especially), on top of the confirmPayment fix below which
+// no longer hard-rejects a late-but-genuine payment even past this window.
+const RESERVATION_TTL_MS = 45 * 60 * 1000;
 
 function paystackHeaders() {
   return {
@@ -27,6 +31,22 @@ function generateOrderNumber() {
   const d = String(date.getDate()).padStart(2, '0');
   const rand = Math.random().toString(36).slice(2, 7).toUpperCase();
   return `TRX-${y}${m}${d}-${rand}`;
+}
+
+// Best-effort: if a logged-in customer is checking out, attach their id to
+// the order so it shows up in their order history. Guest checkout still
+// works fine with no token at all — this never blocks the request.
+function getOptionalCustomerId(req) {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith('Bearer ')) return null;
+  try {
+    const token = header.slice(7);
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    if (payload.role === 'customer' && payload.customerId) return payload.customerId;
+  } catch {
+    // invalid/expired token — just proceed as a guest checkout
+  }
+  return null;
 }
 
 // Releases a single reservation: restores stock for every line item and
@@ -76,7 +96,13 @@ async function releaseExpiredReservations() {
 // Validates the cart, reserves stock for every line item, and creates a
 // 'pending' Order — all inside one transaction, so either the whole
 // reservation succeeds or none of it does and nothing is double-sold.
-async function reserveStockAndCreatePendingOrder({ items, customer, shippingAddress, notes }) {
+async function reserveStockAndCreatePendingOrder({
+  items,
+  customer,
+  shippingAddress,
+  notes,
+  customerId,
+}) {
   if (!Array.isArray(items) || items.length === 0) {
     const err = new Error('Cart is empty');
     err.status = 400;
@@ -139,6 +165,7 @@ async function reserveStockAndCreatePendingOrder({ items, customer, shippingAddr
         [
           {
             orderNumber: generateOrderNumber(),
+            customerId: customerId || undefined,
             items: orderItems,
             subtotal,
             customer,
@@ -183,9 +210,17 @@ exports.initializePayment = async (req, res, next) => {
       return res.status(400).json({ error: 'Shipping address is incomplete' });
     }
 
+    const customerId = getOptionalCustomerId(req);
+
     await releaseExpiredReservations();
 
-    order = await reserveStockAndCreatePendingOrder({ items, customer, shippingAddress, notes });
+    order = await reserveStockAndCreatePendingOrder({
+      items,
+      customer,
+      shippingAddress,
+      notes,
+      customerId,
+    });
 
     const rate = await getUsdToNgnRate();
     const amountNgn = Math.round(order.subtotal * rate);
@@ -227,9 +262,43 @@ exports.initializePayment = async (req, res, next) => {
   }
 };
 
+// Best-effort re-reservation for a payment that's confirming late (after
+// its original stock hold already expired/failed). Returns true if a
+// stock conflict happened on any line item — i.e. it's genuinely sold out
+// now and this needs a human to sort out (backorder, refund, substitute).
+async function tryReReserveStock(order) {
+  let stockConflict = false;
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      for (const item of order.items) {
+        const result = await Product.updateOne(
+          { id: item.productId, unitStock: { $gte: item.quantity } },
+          { $inc: { unitStock: -item.quantity } },
+          { session }
+        );
+        if (result.matchedCount === 0) stockConflict = true;
+      }
+    });
+  } finally {
+    session.endSession();
+  }
+  return stockConflict;
+}
+
 // Shared: verify a reference with Paystack and finalize the matching
-// pending order. Safe to call twice for the same reference — both the
+// order. Safe to call twice for the same reference — both the
 // callback-verify endpoint and the webhook call this.
+//
+// Important: this ALWAYS asks Paystack what actually happened, rather than
+// trusting our own local paymentStatus. A slow payment (bank transfer
+// especially) can easily outlive the stock reservation window, flipping the
+// order to 'expired' locally, even though the customer genuinely paid.
+// Previously this function refused to touch anything but a 'pending' order,
+// which meant a real, successful payment showed the customer a scary
+// "session no longer active" error. Now: if Paystack says paid, we honor
+// it — re-reserving stock where possible, and flagging (not blocking) the
+// rare case where the item sold out in the meantime.
 async function confirmPayment(reference) {
   const order = await Order.findOne({ paymentReference: reference });
   if (!order) {
@@ -240,17 +309,6 @@ async function confirmPayment(reference) {
 
   if (order.paymentStatus === 'paid') return order; // already confirmed, idempotent
 
-  if (order.paymentStatus !== 'pending') {
-    // Already failed/expired — its stock has been released, possibly sold
-    // to someone else since. Don't resurrect it automatically; this needs a
-    // human to reconcile against the Paystack dashboard.
-    const err = new Error(
-      'This checkout session is no longer active. If you were charged, please contact support with your reference.'
-    );
-    err.status = 409;
-    throw err;
-  }
-
   const verifyRes = await axios.get(`${PAYSTACK_BASE_URL}/transaction/verify/${reference}`, {
     headers: paystackHeaders(),
   });
@@ -258,7 +316,9 @@ async function confirmPayment(reference) {
   const data = verifyRes.data.data;
 
   if (!data || data.status !== 'success') {
-    await releaseReservation(order, 'failed');
+    if (order.paymentStatus === 'pending') {
+      await releaseReservation(order, 'failed');
+    }
     const err = new Error('Payment was not successful');
     err.status = 400;
     throw err;
@@ -269,13 +329,23 @@ async function confirmPayment(reference) {
   // never something that round-tripped through a third party.
   const expectedKobo = Math.round((order.amountPaidNgn || 0) * 100);
   if (expectedKobo && data.amount !== expectedKobo) {
-    await releaseReservation(order, 'failed');
+    if (order.paymentStatus === 'pending') {
+      await releaseReservation(order, 'failed');
+    }
     const err = new Error('Paid amount does not match the expected order total');
     err.status = 400;
     throw err;
   }
 
+  // Paystack genuinely confirms this was paid. If our reservation had
+  // already lapsed (order.paymentStatus is 'expired' or 'failed'), its
+  // stock was already handed back — try to reclaim it now.
+  if (order.paymentStatus !== 'pending') {
+    order.stockConflict = await tryReReserveStock(order);
+  }
+
   order.paymentStatus = 'paid';
+  order.status = 'pending'; // fulfillment status starts fresh regardless of how we got here
   order.paymentProvider = 'paystack';
   order.reservationExpiresAt = undefined;
   await order.save();
