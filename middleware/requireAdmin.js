@@ -1,5 +1,7 @@
 const jwt = require('jsonwebtoken');
 
+const VALID_ROLES = ['superadmin', 'product_uploader'];
+
 module.exports = function requireAdmin(req, res, next) {
   const header = req.headers.authorization || '';
   const [scheme, token] = header.split(' ');
@@ -10,7 +12,7 @@ module.exports = function requireAdmin(req, res, next) {
 
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
-    if (payload.role !== 'admin') {
+    if (!VALID_ROLES.includes(payload.role)) {
       return res.status(403).json({ error: 'Not authorized' });
     }
     req.admin = payload;

@@ -65,6 +65,15 @@ function validateProductPayload(body, { partial = false } = {}) {
     if (!Number.isFinite(unitStock) || unitStock < 0) errors.push('unitStock must be a non-negative number');
     else data.unitStock = unitStock;
   }
+  if (!partial || body.category !== undefined) {
+    if (!body.category || typeof body.category !== 'string') errors.push('category is required');
+    else data.category = body.category.trim();
+  }
+  if (body.storage !== undefined) data.storage = String(body.storage).trim();
+  if (body.cardSlot !== undefined) data.cardSlot = String(body.cardSlot).trim();
+  if (body.inches !== undefined) data.inches = String(body.inches).trim();
+  if (body.operatingSystem !== undefined) data.operatingSystem = String(body.operatingSystem).trim();
+  if (body.colorOption !== undefined) data.colorOption = String(body.colorOption).trim();
   if (body.condition !== undefined) data.condition = String(body.condition).trim() || 'New';
   if (body.description !== undefined) data.description = String(body.description);
   if (body.rating !== undefined) {
