@@ -5,7 +5,6 @@ const mongoose = require('mongoose');
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const { computeUnitPrice } = require('./orderController');
-const { getUsdToNgnRate } = require('../services/exchangeRate');
 
 const PAYSTACK_BASE_URL = 'https://api.paystack.co';
 // Bumped from 20 to 45 minutes — a real buffer for slower payment methods
@@ -188,10 +187,11 @@ async function reserveStockAndCreatePendingOrder({
 }
 
 // POST /api/payments/initialize
-// Reserves real stock and a real (pending) Order up front, converts its USD
-// subtotal to Naira at the current live rate, and asks Paystack for a
-// hosted checkout URL. If Paystack's own API call fails, the reservation is
-// released immediately so stock isn't held for nothing.
+// Reserves real stock and a real (pending) Order up front, then asks
+// Paystack for a hosted checkout URL for that order's subtotal — which is
+// already in Naira, no currency conversion involved. If Paystack's own API
+// call fails, the reservation is released immediately so stock isn't held
+// for nothing.
 exports.initializePayment = async (req, res, next) => {
   let order;
   try {
@@ -222,10 +222,13 @@ exports.initializePayment = async (req, res, next) => {
       customerId,
     });
 
-    const rate = await getUsdToNgnRate();
-    const amountNgn = Math.round(order.subtotal * rate);
+    // Prices are stored directly in Naira — order.subtotal IS the amount to
+    // charge, no exchange-rate conversion needed (that used to be here and
+    // was both wrong, once prices stopped being USD, and slow, since it
+    // made this request wait on a third-party FX API before ever reaching
+    // Paystack).
+    const amountNgn = Math.round(order.subtotal);
 
-    order.exchangeRateUsed = rate;
     order.amountPaidNgn = amountNgn;
     order.paymentReference = generateReference();
     await order.save();
@@ -244,7 +247,7 @@ exports.initializePayment = async (req, res, next) => {
     );
 
     const { authorization_url, access_code } = paystackRes.data.data;
-    res.json({ authorization_url, access_code, reference: order.paymentReference, amountNgn, rate });
+    res.json({ authorization_url, access_code, reference: order.paymentReference, amountNgn });
   } catch (err) {
     // Don't hold stock hostage for a checkout that never made it to Paystack.
     if (order && order.paymentStatus === 'pending') {
