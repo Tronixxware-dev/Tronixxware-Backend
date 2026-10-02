@@ -327,11 +327,18 @@ async function confirmPayment(reference) {
     throw err;
   }
 
-  // Defense in depth: confirm the amount Paystack actually received matches
-  // what we asked for, using the amount WE stored at initialize time —
-  // never something that round-tripped through a third party.
+  // Defense in depth: confirm Paystack actually received at least what we
+  // asked for, using the amount WE stored at initialize time — never
+  // something that round-tripped through a third party. This is
+  // intentionally "at least", not "exactly equal": if your Paystack
+  // dashboard is set to have the CUSTOMER bear the transaction fee
+  // (Settings → Preferences), Paystack adds its own fee on top of the
+  // amount we requested, so data.amount will legitimately be a little
+  // higher than expectedKobo on every transaction. That's fine — the thing
+  // this check actually guards against is being underpaid, not a customer
+  // covering a processing fee.
   const expectedKobo = Math.round((order.amountPaidNgn || 0) * 100);
-  if (expectedKobo && data.amount !== expectedKobo) {
+  if (expectedKobo && data.amount < expectedKobo) {
     if (order.paymentStatus === 'pending') {
       await releaseReservation(order, 'failed');
     }
