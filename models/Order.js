@@ -21,7 +21,7 @@ const orderSchema = new mongoose.Schema(
     // guest checkouts — those orders just live on paymentReference/email.
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer' },
     items: { type: [orderItemSchema], required: true },
-    subtotal: { type: Number, required: true }, // in USD — the store's base currency
+    subtotal: { type: Number, required: true }, // in Naira — the store's base currency
     customer: {
       fullName: { type: String, required: true },
       email: { type: String, required: true },
